@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ImageUploadZone from "@/components/ImageUploadZone";
 import type { FabricEntry } from "@/types";
 
@@ -18,6 +18,11 @@ export default function FabricPanelList({ onChange, suggestedPanels }: Props) {
   const [entries, setEntries] = useState<InternalEntry[]>([
     { file: null, panel: "" },
   ]);
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  const panelDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (suggestedPanels && suggestedPanels.length > 0) {
@@ -25,12 +30,16 @@ export default function FabricPanelList({ onChange, suggestedPanels }: Props) {
     }
   }, [suggestedPanels]);
 
-  const update = (next: InternalEntry[]) => {
-    setEntries(next);
+  const notifyParent = (next: InternalEntry[]) => {
     const valid = next.filter(
       (e): e is FabricEntry => e.file !== null && e.panel.trim() !== ""
     );
     onChange(valid);
+  };
+
+  const update = (next: InternalEntry[]) => {
+    setEntries(next);
+    notifyParent(next);
   };
 
   const setFile = (index: number, file: File | null) => {
@@ -39,8 +48,14 @@ export default function FabricPanelList({ onChange, suggestedPanels }: Props) {
   };
 
   const setPanel = (index: number, panel: string) => {
-    const next = entries.map((e, i) => (i === index ? { ...e, panel } : e));
-    update(next);
+    setEntries((prev) => prev.map((e, i) => (i === index ? { ...e, panel } : e)));
+    if (panelDebounceRef.current) clearTimeout(panelDebounceRef.current);
+    panelDebounceRef.current = setTimeout(() => {
+      const valid = entriesRef.current.filter(
+        (e): e is FabricEntry => e.file !== null && e.panel.trim() !== ""
+      );
+      onChangeRef.current(valid);
+    }, 400);
   };
 
   const addEntry = () => {
