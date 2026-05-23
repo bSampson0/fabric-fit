@@ -2,6 +2,34 @@
 
 import { useCallback, useState } from "react";
 
+async function compressImage(file: File, maxDim = 1024, quality = 0.88): Promise<File> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext("2d")!.drawImage(img, 0, 0, w, h);
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) { resolve(file); return; }
+          const name = file.name.replace(/\.[^.]+$/, ".jpg");
+          resolve(new File([blob], name, { type: "image/jpeg" }));
+        },
+        "image/jpeg",
+        quality
+      );
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+}
+
 interface Props {
   label: string;
   description: string;
@@ -20,7 +48,7 @@ export default function ImageUploadZone({
   const inputId = `upload-${label.replace(/\s+/g, "-").toLowerCase()}`;
 
   const handleFile = useCallback(
-    (incoming: File | null) => {
+    async (incoming: File | null) => {
       if (!incoming) return;
       const allowed = ["image/png", "image/jpeg", "image/webp"];
       if (!allowed.includes(incoming.type)) {
@@ -31,7 +59,8 @@ export default function ImageUploadZone({
         alert("File must be under 10MB.");
         return;
       }
-      onChange(incoming);
+      const compressed = await compressImage(incoming);
+      onChange(compressed);
     },
     [onChange]
   );
