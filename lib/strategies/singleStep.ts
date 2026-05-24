@@ -1,5 +1,5 @@
-import openai from "@/lib/openai";
-import { webFileToOpenAIFile } from "@/lib/imageUtils";
+import openai from "../openai";
+import { webFileToOpenAIFile } from "../imageUtils";
 import type { FabricEntry } from "@/types";
 
 export async function runSingleStep(

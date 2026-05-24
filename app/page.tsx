@@ -1,17 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import FabricPanelList from "@/components/FabricPanelList";
 import ImageUploadZone from "@/components/ImageUploadZone";
 import ResultDisplay from "@/components/ResultDisplay";
 import LoadingSpinner from "@/components/LoadingSpinner";
-import type { GenerateResponse, GenerateError, Strategy, FabricEntry } from "@/types";
+import type { GenerateResponse, GenerateError, JobStarted, JobStatus, Strategy, FabricEntry } from "@/types";
 
 type State =
   | { status: "idle" }
-  | { status: "loading" }
+  | { status: "submitting" }
+  | { status: "polling"; jobId: string }
   | { status: "success"; data: GenerateResponse }
   | { status: "error"; error: string; detail?: string };
+
+const POLL_INTERVAL_MS = 3000;
+const POLL_TIMEOUT_MS = 5 * 60 * 1000;
 
 export default function Home() {
   const [fabricEntries, setFabricEntries] = useState<FabricEntry[]>([]);
@@ -21,6 +25,55 @@ export default function Home() {
   const [suggestedPanels, setSuggestedPanels] = useState<string[]>([]);
   const [detectingPanels, setDetectingPanels] = useState(false);
   const [detectError, setDetectError] = useState<string | null>(null);
+
+  // Polling effect — runs whenever we enter the "polling" state
+  useEffect(() => {
+    if (state.status !== "polling") return;
+    const { jobId } = state;
+
+    let cancelled = false;
+    const deadline = Date.now() + POLL_TIMEOUT_MS;
+    let timerId: ReturnType<typeof setTimeout>;
+
+    const poll = async () => {
+      if (cancelled) return;
+      if (Date.now() > deadline) {
+        setState({ status: "error", error: "Generation timed out — please try again." });
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/status/${jobId}`);
+        const json = (await res.json()) as JobStatus;
+
+        if (cancelled) return;
+
+        if (json.status === "done") {
+          setState({
+            status: "success",
+            data: {
+              success: true,
+              imageUrl: json.imageUrl,
+              strategy: json.strategy,
+              prompt: json.prompt,
+            },
+          });
+        } else if (json.status === "error") {
+          setState({ status: "error", error: json.error, detail: json.detail });
+        } else {
+          timerId = setTimeout(poll, POLL_INTERVAL_MS);
+        }
+      } catch {
+        if (!cancelled) timerId = setTimeout(poll, POLL_INTERVAL_MS);
+      }
+    };
+
+    timerId = setTimeout(poll, 2000);
+    return () => {
+      cancelled = true;
+      clearTimeout(timerId);
+    };
+  }, [state]);
 
   const handleDetectPanels = async () => {
     if (!garmentFile) return;
@@ -48,7 +101,7 @@ export default function Home() {
   const handleGenerate = async () => {
     if (fabricEntries.length === 0 || !garmentFile) return;
 
-    setState({ status: "loading" });
+    setState({ status: "submitting" });
 
     const form = new FormData();
     form.append("garment", garmentFile);
@@ -61,35 +114,34 @@ export default function Home() {
 
     try {
       const res = await fetch("/api/generate", { method: "POST", body: form });
-      const json = (await res.json()) as GenerateResponse | GenerateError;
+      const json = (await res.json()) as JobStarted | GenerateError;
 
-      if (!res.ok || !json.success) {
+      if (!res.ok || !("jobId" in json)) {
         const err = json as GenerateError;
         setState({ status: "error", error: err.error, detail: err.detail });
         return;
       }
 
-      setState({ status: "success", data: json as GenerateResponse });
+      setState({ status: "polling", jobId: json.jobId });
     } catch {
-      setState({
-        status: "error",
-        error: "Network error — please check your connection and try again.",
-      });
+      setState({ status: "error", error: "Network error — please check your connection and try again." });
     }
   };
 
   const canGenerate =
-    fabricEntries.length > 0 && !!garmentFile && state.status !== "loading";
+    fabricEntries.length > 0 &&
+    !!garmentFile &&
+    state.status !== "submitting" &&
+    state.status !== "polling";
+
+  const isWorking = state.status === "submitting" || state.status === "polling";
 
   return (
     <main className="max-w-2xl mx-auto px-4 py-12">
       <header className="mb-10 text-center">
-        <h1 className="text-3xl font-bold text-gray-900 tracking-tight">
-          FabricFit
-        </h1>
+        <h1 className="text-3xl font-bold text-gray-900 tracking-tight">FabricFit</h1>
         <p className="mt-2 text-gray-500 text-sm">
-          Upload a garment and assign fabrics to each panel — AI will dress the
-          garment in your fabrics.
+          Upload a garment and assign fabrics to each panel — AI will dress the garment in your fabrics.
         </p>
       </header>
 
@@ -125,13 +177,9 @@ export default function Home() {
                 {detectingPanels ? "Detecting panels…" : "Detect Panels"}
               </button>
               {suggestedPanels.length > 0 && (
-                <span className="text-xs text-gray-500">
-                  Found: {suggestedPanels.join(", ")}
-                </span>
+                <span className="text-xs text-gray-500">Found: {suggestedPanels.join(", ")}</span>
               )}
-              {detectError && (
-                <span className="text-xs text-red-500">{detectError}</span>
-              )}
+              {detectError && <span className="text-xs text-red-500">{detectError}</span>}
             </div>
           )}
         </div>
@@ -171,26 +219,22 @@ export default function Home() {
         disabled={!canGenerate}
         className={`
           mt-6 w-full py-3 px-6 rounded-xl font-semibold text-white transition-all
-          ${
-            canGenerate
-              ? "bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98]"
-              : "bg-gray-300 cursor-not-allowed"
-          }
+          ${canGenerate ? "bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98]" : "bg-gray-300 cursor-not-allowed"}
         `}
       >
-        {state.status === "loading" ? "Generating…" : "Generate"}
+        {isWorking ? "Generating…" : "Generate"}
       </button>
 
-      {state.status === "loading" && (
-        <LoadingSpinner message="Sending images to AI…" />
+      {state.status === "submitting" && <LoadingSpinner message="Uploading images…" />}
+
+      {state.status === "polling" && (
+        <LoadingSpinner message="AI is generating your garment — this takes 30–90 seconds…" />
       )}
 
       {state.status === "error" && (
         <div className="mt-6 rounded-xl bg-red-50 border border-red-200 p-4">
           <p className="text-sm font-semibold text-red-700">{state.error}</p>
-          {state.detail && (
-            <p className="mt-1 text-xs text-red-500">{state.detail}</p>
-          )}
+          {state.detail && <p className="mt-1 text-xs text-red-500">{state.detail}</p>}
         </div>
       )}
 

@@ -17,3 +17,12 @@ export interface GenerateError {
   error: string;
   detail?: string;
 }
+
+export interface JobStarted {
+  jobId: string;
+}
+
+export type JobStatus =
+  | { status: "processing" }
+  | { status: "done"; imageUrl: string; strategy: Strategy; prompt?: string }
+  | { status: "error"; error: string; detail?: string };

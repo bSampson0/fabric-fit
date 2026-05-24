@@ -1,5 +1,5 @@
-import openai from "@/lib/openai";
-import { fileToBase64 } from "@/lib/imageUtils";
+import openai from "../openai";
+import { fileToBase64 } from "../imageUtils";
 import type { FabricEntry } from "@/types";
 
 async function describeImage(
